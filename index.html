@@ -51,6 +51,10 @@
   #preset {
     max-width: 100%;
   }
+  #printNote {
+    color: #666;
+    font-size: 0.9rem;
+  }
   #message {
     white-space: pre-line;
   }
@@ -135,8 +139,13 @@
   <p id="previewNote"></p>
 </fieldset>
 
+<!-- 試し刷り用: オンにするとPDFにもラベルの枠線を描く -->
+<label><input type="checkbox" id="printBorder"> 枠線を印刷する(試し刷り用)</label>
+<br>
 <!-- PDF作成(フォント取得が終わるまで押せない)。作成したPDFは新しいタブで開く -->
 <button type="button" id="createPdf" disabled>フォント読み込み中…</button>
+<!-- 拡大・縮小して印刷するとラベルからずれるための注意書き -->
+<p id="printNote">印刷するときは、倍率を「実際のサイズ(100%)」にしてください。「用紙に合わせる」などで拡大・縮小すると、ラベルからずれます。</p>
 <p id="message"></p>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -472,7 +481,12 @@ function createPdf() {
 
   const doc = createDocWithFont();
   doc.setFontSize(fontSize);
+  // 試し刷り用の枠線(細い灰色の線)
+  const printBorder = document.getElementById('printBorder').checked;
+  doc.setDrawColor(150);
+  doc.setLineWidth(0.1);
   for (const { x, y } of labelPositions(s, cols, rows)) {
+    if (printBorder) doc.rect(x, y, s.labelWidth, s.labelHeight);
     const { textX, lineYs } = calcTextPositions(lines, fontSize, x, y, s);
     lines.forEach((line, i) => {
       doc.text(line, textX, lineYs[i], { align: s.alignH, baseline: 'middle' });
