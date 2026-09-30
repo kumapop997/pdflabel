@@ -73,6 +73,17 @@
   <label>横 <input type="number" id="gapHorizontal" value="5" min="0" step="0.1"></label>
 </fieldset>
 
+<!-- 用紙プリセット(選ぶと余白・ラベルサイズ・ラベル間余白を自動設定する) -->
+<fieldset>
+  <legend>用紙プリセット</legend>
+  <select id="preset">
+    <option value="custom" selected>カスタム(手動設定)</option>
+    <option value="a4_72">A4 72面</option>
+    <option value="a4_24">A4 24面</option>
+    <option value="a4_44">A4 44面</option>
+  </select>
+</fieldset>
+
 <!-- 印字するテキストと文字の配置 -->
 <fieldset>
   <legend>テキスト</legend>
@@ -410,6 +421,45 @@ function createPdf() {
   const summary = cols + '列×' + rows + '行=' + (cols * rows) + '枚、文字サイズ ' + fontSize + 'pt でPDFを作成しました。';
   showMessage(warning ? warning + '\n' + summary : summary, !!warning);
 }
+
+// 用紙プリセット(単位mm)。キーは入力欄の id
+const PRESETS = {
+  a4_72: {
+    marginTop: 10.2, marginBottom: 10.2, marginLeft: 7.6, marginRight: 7.6,
+    labelWidth: 25.4, labelHeight: 10, gapHorizontal: 2.54, gapVertical: 0,
+  },
+  a4_24: {
+    marginTop: 13.5, marginBottom: 12.6, marginLeft: 6.8, marginRight: 6.8,
+    labelWidth: 64.3, labelHeight: 33.9, gapHorizontal: 0, gapVertical: 0,
+  },
+  a4_44: {
+    marginTop: 10.6, marginBottom: 10.6, marginLeft: 6.4, marginRight: 6.4,
+    labelWidth: 48.3, labelHeight: 25.4, gapHorizontal: 0, gapVertical: 0,
+  },
+};
+const presetSelect = document.getElementById('preset');
+// プリセットで設定する入力欄の id
+const PRESET_FIELDS = Object.keys(PRESETS.a4_72);
+
+// プリセットを選んだら入力欄に値を入れる(カスタムの場合は今の値をそのまま使う)
+presetSelect.addEventListener('change', () => {
+  const preset = PRESETS[presetSelect.value];
+  if (!preset) return;
+  for (const id of PRESET_FIELDS) {
+    document.getElementById(id).value = preset[id];
+  }
+  updatePreview();
+});
+
+// 数値を手で変えてプリセットと値が食い違ったら、表示を「カスタム」に戻す
+PRESET_FIELDS.forEach(id => {
+  document.getElementById(id).addEventListener('input', () => {
+    const preset = PRESETS[presetSelect.value];
+    if (preset && PRESET_FIELDS.some(f => readNumber(f) !== preset[f])) {
+      presetSelect.value = 'custom';
+    }
+  });
+});
 
 button.addEventListener('click', createPdf);
 // 入力のたびにプレビューを更新する
