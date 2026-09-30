@@ -34,6 +34,17 @@
   #message {
     white-space: pre-line;
   }
+  #preview {
+    display: block;
+    width: 100%;
+    max-width: 300px;
+    border: 1px solid #999;
+    background: #fff;
+  }
+  #previewNote {
+    color: #666;
+    font-size: 0.9rem;
+  }
 </style>
 </head>
 <body>
@@ -70,8 +81,8 @@
   <br>
   <label>左右の揃え
     <select id="alignH">
-      <option value="left">左</option>
-      <option value="center" selected>中央</option>
+      <option value="left" selected>左</option>
+      <option value="center">中央</option>
       <option value="right">右</option>
     </select>
   </label>
@@ -84,7 +95,14 @@
   </label>
 </fieldset>
 
-<!-- PDF作成(フォント取得が終わるまで押せない) -->
+<!-- A4用紙の縮小プレビュー(入力のたびに更新) -->
+<fieldset>
+  <legend>プレビュー</legend>
+  <canvas id="preview"></canvas>
+  <p id="previewNote"></p>
+</fieldset>
+
+<!-- PDF作成(フォント取得が終わるまで押せない)。作成したPDFは新しいタブで開く -->
 <button type="button" id="createPdf" disabled>フォント読み込み中…</button>
 <p id="message"></p>
 
@@ -103,12 +121,32 @@ const PT_TO_MM = 25.4 / 72;
 const FONT_URL = 'https://cdn.jsdelivr.net/gh/google/fonts@01ac47e0b1cddbc298334c69a5dfafb0205ffa28/ofl/bizudgothic/BIZUDGothic-Regular.ttf';
 const FONT_FILE = 'BIZUDGothic-Regular.ttf';
 const FONT_NAME = 'BIZUDGothic';
+// プレビュー(canvas)で使うフォント名
+const PREVIEW_FONT = 'BIZUDGothicPreview';
+// プレビューの縮尺(1mmあたりの画面上のピクセル数)
+const PREVIEW_PX_PER_MM = 300 / PAPER_W;
 
 const button = document.getElementById('createPdf');
 const message = document.getElementById('message');
+const canvas = document.getElementById('preview');
+const previewNote = document.getElementById('previewNote');
 
 // 取得したフォント(Base64)。初回に1度だけ取得して使い回す
 let fontBase64 = null;
+// 文字幅を測るための jsPDF 文書。フォント登録は重いため1度だけ作って使い回す
+let measureDoc = null;
+// フォントの取得に失敗したかどうか
+let fontFailed = false;
+
+// 日本語フォントを登録した jsPDF 文書を作る
+function createDocWithFont() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  doc.addFileToVFS(FONT_FILE, fontBase64);
+  doc.addFont(FONT_FILE, FONT_NAME, 'normal');
+  doc.setFont(FONT_NAME, 'normal');
+  return doc;
+}
 
 // メッセージを表示する(isError が true なら赤字)
 function showMessage(text, isError) {
@@ -133,10 +171,21 @@ async function loadFont() {
   try {
     const res = await fetch(FONT_URL);
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    fontBase64 = arrayBufferToBase64(await res.arrayBuffer());
+    const buffer = await res.arrayBuffer();
+    fontBase64 = arrayBufferToBase64(buffer);
+    // 同じフォントをプレビュー用にも登録し、PDFと見た目を揃える
+    const face = new FontFace(PREVIEW_FONT, buffer);
+    await face.load();
+    document.fonts.add(face);
+    // プレビュー用フォントの準備ができてから文字幅の計測を有効にする
+    measureDoc = createDocWithFont();
     button.disabled = false;
     button.textContent = 'PDFを作成';
+    updatePreview();
   } catch (e) {
+    fontFailed = true;
+    measureDoc = null;
+    updatePreview();
     button.textContent = 'PDFを作成';
     showMessage('フォントの読み込みに失敗しました。ネットワークを確認してページを再読み込みしてください。(' + e.message + ')', true);
   }
@@ -176,7 +225,6 @@ function readSettings() {
   for (const [name, v] of positive) {
     if (!Number.isFinite(v) || v <= 0) return { error: name + 'には0より大きい数値を入力してください。' };
   }
-  if (s.text.trim() === '') return { error: 'テキストを入力してください。' };
   // 文字サイズは空欄なら自動、数値なら手動指定
   s.fontSize = s.fontSizeText === '' ? null : Number(s.fontSizeText);
   if (s.fontSize !== null && (!Number.isFinite(s.fontSize) || s.fontSize <= 0)) {
@@ -210,8 +258,9 @@ function calcMaxFontSize(doc, lines, s) {
   return Math.floor(Math.min(sizeByWidth, sizeByHeight) * 10) / 10;
 }
 
-// 1枚のラベルに文字を描く(x, y はラベル左上の座標)
-function drawLabelText(doc, lines, fontSize, x, y, s) {
+// 1枚のラベル内の文字の位置を求める(x, y はラベル左上の座標、単位mm)
+// 戻り値: textX = 左右揃えの基準位置、lineYs = 各行の高さの中央の位置
+function calcTextPositions(lines, fontSize, x, y, s) {
   const lineH = fontSize * LINE_HEIGHT * PT_TO_MM;
   const blockH = lineH * lines.length;
   const innerW = s.labelWidth - LABEL_PADDING * 2;
@@ -222,15 +271,106 @@ function drawLabelText(doc, lines, fontSize, x, y, s) {
   if (s.alignV === 'middle') top += (innerH - blockH) / 2;
   if (s.alignV === 'bottom') top += innerH - blockH;
 
-  // 左右の揃え: jsPDF の align に合わせた基準位置
+  // 左右の揃え: 左揃えなら左端、中央なら中央、右揃えなら右端を基準にする
   let textX = x + LABEL_PADDING;
   if (s.alignH === 'center') textX += innerW / 2;
   if (s.alignH === 'right') textX += innerW;
 
-  lines.forEach((line, i) => {
-    // 各行の高さの中央を基準線にして描く
-    doc.text(line, textX, top + lineH * i + lineH / 2, { align: s.alignH, baseline: 'middle' });
-  });
+  const lineYs = lines.map((_, i) => top + lineH * i + lineH / 2);
+  return { textX, lineYs };
+}
+
+// 各ラベルの左上の座標(mm)を順に返す。上余白・左余白を起点に左上寄せで並べる
+function labelPositions(s, cols, rows) {
+  const positions = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      positions.push({
+        x: s.marginLeft + c * (s.labelWidth + s.gapH),
+        y: s.marginTop + r * (s.labelHeight + s.gapV),
+      });
+    }
+  }
+  return positions;
+}
+
+// 入力値から、並べ方と文字サイズをまとめて計算する(プレビューとPDFで共通)
+// 問題があれば error を返す。並べ方まで計算できた場合は s, cols, rows も返す(プレビューで枠だけ描くため)
+function calcPlan() {
+  const { settings: s, error } = readSettings();
+  if (error) return { error };
+  const { cols, rows } = calcLayout(s);
+  if (cols === 0 || rows === 0) {
+    return { error: 'この設定ではラベルが1枚も入りません。余白やラベルのサイズを見直してください。' };
+  }
+  if (s.text.trim() === '') return { error: 'テキストを入力してください。', s, cols, rows };
+  if (!measureDoc) {
+    const reason = fontFailed ? 'フォントを読み込めなかったため、文字は表示できません。' : 'フォント読み込み中…';
+    return { error: reason, s, cols, rows };
+  }
+  // テキストエリアの改行をそのまま行として扱う
+  const lines = s.text.replace(/\r\n?/g, '\n').split('\n');
+
+  const maxSize = calcMaxFontSize(measureDoc, lines, s);
+  if (maxSize <= 0) return { error: 'ラベルが小さすぎて文字を配置できません。', s, cols, rows };
+  // 手動指定がはみ出す場合は収まるサイズに縮小する
+  let fontSize = maxSize;
+  let warning = '';
+  if (s.fontSize !== null) {
+    if (s.fontSize > maxSize) {
+      warning = '指定の文字サイズ(' + s.fontSize + 'pt)ではラベルからはみ出すため、' + maxSize + 'ptに縮小しました。';
+    } else {
+      fontSize = s.fontSize;
+    }
+  }
+  return { s, cols, rows, lines, fontSize, warning };
+}
+
+// A4用紙の縮小プレビューを描く(ラベルの枠と文字)
+function updatePreview() {
+  const dpr = window.devicePixelRatio || 1;
+  // 画面上のピクセル → canvas のピクセルの倍率(高解像度画面でもぼやけないようにする)
+  const k = PREVIEW_PX_PER_MM * dpr;
+  canvas.width = Math.round(PAPER_W * k);
+  canvas.height = Math.round(PAPER_H * k);
+  canvas.style.aspectRatio = PAPER_W + ' / ' + PAPER_H;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const plan = calcPlan();
+  // 並べ方が決まらない場合は用紙だけ表示する
+  if (!plan.s) {
+    previewNote.textContent = plan.error;
+    return;
+  }
+  const { s, cols, rows } = plan;
+  const positions = labelPositions(s, cols, rows);
+
+  // ラベルの枠(線がにじまないよう0.5pxずらす)
+  ctx.strokeStyle = '#999';
+  ctx.lineWidth = 1;
+  for (const { x, y } of positions) {
+    ctx.strokeRect(Math.round(x * k) + 0.5, Math.round(y * k) + 0.5,
+      Math.round(s.labelWidth * k) - 1, Math.round(s.labelHeight * k) - 1);
+  }
+  // テキストが空欄・フォント取得前などで文字を描けない場合は枠だけにする
+  if (plan.error) {
+    previewNote.textContent = plan.error;
+    return;
+  }
+
+  // 文字(PDFと同じ文字サイズ・位置で描く)
+  const { lines, fontSize, warning } = plan;
+  ctx.fillStyle = '#222';
+  ctx.font = (fontSize * PT_TO_MM * k) + 'px "' + PREVIEW_FONT + '"';
+  ctx.textAlign = s.alignH;
+  ctx.textBaseline = 'middle';
+  for (const { x, y } of positions) {
+    const { textX, lineYs } = calcTextPositions(lines, fontSize, x, y, s);
+    lines.forEach((line, i) => ctx.fillText(line, textX * k, lineYs[i] * k));
+  }
+  previewNote.textContent = warning;
 }
 
 // 日時付きのファイル名を作る(例: label_20260930_1530.pdf)
@@ -243,59 +383,40 @@ function makeFileName() {
 
 // [PDFを作成] ボタンの処理
 function createPdf() {
-  const { settings: s, error } = readSettings();
-  if (error) {
-    showMessage(error, true);
+  const plan = calcPlan();
+  if (plan.error) {
+    showMessage(plan.error, true);
     return;
   }
-  const { cols, rows } = calcLayout(s);
-  if (cols === 0 || rows === 0) {
-    showMessage('この設定ではラベルが1枚も入りません。余白やラベルのサイズを見直してください。', true);
-    return;
-  }
+  const { s, cols, rows, lines, fontSize, warning } = plan;
 
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
-  // 日本語フォントを登録して使う
-  doc.addFileToVFS(FONT_FILE, fontBase64);
-  doc.addFont(FONT_FILE, FONT_NAME, 'normal');
-  doc.setFont(FONT_NAME, 'normal');
-
-  // テキストエリアの改行をそのまま行として扱う
-  const lines = s.text.replace(/\r\n?/g, '\n').split('\n');
-
-  const maxSize = calcMaxFontSize(doc, lines, s);
-  if (maxSize <= 0) {
-    showMessage('ラベルが小さすぎて文字を配置できません。', true);
-    return;
-  }
-  // 手動指定がはみ出す場合は収まるサイズに縮小する
-  let fontSize = maxSize;
-  let warning = '';
-  if (s.fontSize !== null) {
-    if (s.fontSize > maxSize) {
-      warning = '指定の文字サイズ(' + s.fontSize + 'pt)ではラベルからはみ出すため、' + maxSize + 'ptに縮小しました。';
-    } else {
-      fontSize = s.fontSize;
-    }
-  }
+  const doc = createDocWithFont();
   doc.setFontSize(fontSize);
-
-  // 上余白・左余白を起点に左上寄せで並べる
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const x = s.marginLeft + c * (s.labelWidth + s.gapH);
-      const y = s.marginTop + r * (s.labelHeight + s.gapV);
-      drawLabelText(doc, lines, fontSize, x, y, s);
-    }
+  for (const { x, y } of labelPositions(s, cols, rows)) {
+    const { textX, lineYs } = calcTextPositions(lines, fontSize, x, y, s);
+    lines.forEach((line, i) => {
+      doc.text(line, textX, lineYs[i], { align: s.alignH, baseline: 'middle' });
+    });
   }
 
-  doc.save(makeFileName());
+  // PDFのタイトルに日時付きのファイル名を入れる(保存時の名前に反映されるかはブラウザ次第)
+  doc.setProperties({ title: makeFileName() });
+  // 作成したPDFを新しいタブで開く
+  const tab = window.open(doc.output('bloburl'), '_blank');
+  if (!tab) {
+    showMessage('新しいタブを開けませんでした。ブラウザのポップアップブロックを解除してください。', true);
+    return;
+  }
   const summary = cols + '列×' + rows + '行=' + (cols * rows) + '枚、文字サイズ ' + fontSize + 'pt でPDFを作成しました。';
   showMessage(warning ? warning + '\n' + summary : summary, !!warning);
 }
 
 button.addEventListener('click', createPdf);
+// 入力のたびにプレビューを更新する
+document.querySelectorAll('input, textarea, select').forEach(el => {
+  el.addEventListener('input', updatePreview);
+});
+updatePreview();
 loadFont();
 </script>
 </body>
