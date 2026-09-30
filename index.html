@@ -31,6 +31,10 @@
     padding: 8px 24px;
     font-size: 1rem;
   }
+  /* プリセット名が長いので画面幅に収める */
+  #preset {
+    max-width: 100%;
+  }
   #message {
     white-space: pre-line;
   }
@@ -76,12 +80,11 @@
 <!-- 用紙プリセット(選ぶと余白・ラベルサイズ・ラベル間余白を自動設定する) -->
 <fieldset>
   <legend>用紙プリセット</legend>
-  <select id="preset">
-    <option value="custom" selected>カスタム(手動設定)</option>
-    <option value="a4_72">A4 72面</option>
-    <option value="a4_24">A4 24面</option>
-    <option value="a4_44">A4 44面</option>
-  </select>
+  <!-- 入力した文字を含むプリセットだけをドロップダウンに表示する -->
+  <label>絞り込み <input type="search" id="presetFilter" placeholder="例: 24面、72224、エーワン"></label>
+  <br>
+  <!-- 選択肢はスクリプトで PRESETS から作る -->
+  <select id="preset"></select>
 </fieldset>
 
 <!-- 印字するテキストと文字の配置 -->
@@ -422,44 +425,112 @@ function createPdf() {
   showMessage(warning ? warning + '\n' + summary : summary, !!warning);
 }
 
-// 用紙プリセット(単位mm)。キーは入力欄の id
-const PRESETS = {
-  a4_72: {
-    marginTop: 10.2, marginBottom: 10.2, marginLeft: 7.6, marginRight: 7.6,
-    labelWidth: 25.4, labelHeight: 10, gapHorizontal: 2.54, gapVertical: 0,
-  },
-  a4_24: {
-    marginTop: 13.5, marginBottom: 12.6, marginLeft: 6.8, marginRight: 6.8,
-    labelWidth: 64.3, labelHeight: 33.9, gapHorizontal: 0, gapVertical: 0,
-  },
-  a4_44: {
-    marginTop: 10.6, marginBottom: 10.6, marginLeft: 6.4, marginRight: 6.4,
-    labelWidth: 48.3, labelHeight: 25.4, gapHorizontal: 0, gapVertical: 0,
-  },
-};
+// 用紙プリセット(単位mm)
+// 並び: [キー, 表示名, 上, 下, 左, 右, ラベル幅, ラベル高さ, 間隔(横), 間隔(縦)]
+// エーワンの値は公式サイトの商品ページにある寸法図から読み取ったもの(2026年9月確認)
+// 寸法図にない右余白・下余白は「用紙サイズ − 左(上)余白 − ラベルを並べた幅(高さ)」で求めた
+const PRESET_ROWS = [
+  ['a4_72', 'A4 72面', 10.2, 10.2, 7.6, 7.6, 25.4, 10, 2.54, 0],
+  ['a4_24', 'A4 24面', 13.5, 12.6, 6.8, 6.8, 64.3, 33.9, 0, 0],
+  ['a4_44', 'A4 44面', 10.6, 10.6, 6.4, 6.4, 48.3, 25.4, 0, 0],
+  ['aone_72201', 'エーワン 72201 A4 1面 210×297mm ノーカット', 0, 0, 0, 0, 210, 297, 0, 0],
+  ['aone_72202', 'エーワン 72202 A4 2面 210×148.5mm 余白なし', 0, 0, 0, 0, 210, 148.5, 0, 0],
+  ['aone_72204', 'エーワン 72204 A4 4面 105×148.5mm 余白なし', 0, 0, 0, 0, 105, 148.5, 0, 0],
+  ['aone_72206', 'エーワン 72206 A4 6面 63×120mm 四辺余白付 角丸', 23.5, 23.5, 10.5, 10.5, 63, 120, 0, 10],
+  ['aone_72208', 'エーワン 72208 A4 8面 97×69mm 四辺余白付', 10.5, 10.5, 8, 8, 97, 69, 0, 0],
+  ['aone_72210', 'エーワン 72210 A4 10面 86.4×50.8mm 四辺余白付', 21.2, 21.8, 18.6, 18.6, 86.4, 50.8, 0, 0],
+  ['aone_72212', 'エーワン 72212 A4 12面 86.4×42.3mm 四辺余白付', 21.2, 22, 18.6, 18.6, 86.4, 42.3, 0, 0],
+  ['aone_72312', 'エーワン 72312 A4 12面 83.8×42.3mm 四辺余白付 角丸', 21.5, 21.7, 19.3, 19.3, 83.8, 42.3, 3.8, 0],
+  ['aone_72214', 'エーワン 72214 A4 14面 86.4×38.1mm 四辺余白付', 12.5, 17.8, 19, 18.2, 86.4, 38.1, 0, 0],
+  ['aone_72218', 'エーワン 72218 A4 18面 63.5×46.5mm 四辺余白付 角丸', 9, 9, 7.2, 7.2, 63.5, 46.5, 2.55, 0],
+  ['aone_72318', 'エーワン 72318 A4 18面 70×42.3mm 上下余白付', 21.2, 22, 0, 0, 70, 42.3, 0, 0],
+  ['aone_72220', 'エーワン 72220 A4 20面 42×74.25mm 余白なし', 0, 0, 0, 0, 42, 74.25, 0, 0],
+  ['aone_72221', 'エーワン 72221 A4 21面 63.5×38.1mm 四辺余白付 角丸', 15.15, 15.15, 7.2, 7.2, 63.5, 38.1, 2.55, 0],
+  ['aone_72321', 'エーワン 72321 A4 21面 70×38.1mm 上下余白付', 14.8, 15.5, 0, 0, 70, 38.1, 0, 0],
+  ['aone_72224', 'エーワン 72224 A4 24面 66×33.9mm 四辺余白付', 12.9, 12.9, 6, 6, 66, 33.9, 0, 0],
+  ['aone_72324', 'エーワン 72324 A4 24面 70×33.9mm 上下余白付', 12.7, 13.1, 0, 0, 70, 33.9, 0, 0],
+  ['aone_72227', 'エーワン 72227 A4 27面 62×31mm 四辺余白付 角丸', 9, 9, 9, 9, 62, 31, 3, 0],
+  ['aone_72230', 'エーワン 72230 A4 30面 53.3×25.4mm 四辺余白付 角丸', 21.5, 21.5, 19, 23.5, 53.3, 25.4, 3.8, 0],
+  ['aone_72236', 'エーワン 72236 A4 36面 60×20mm 四辺余白付 角丸', 12, 12, 12, 12, 60, 20, 3, 3],
+  ['aone_72244', 'エーワン 72244 A4 44面 48.3×25.4mm 四辺余白付', 8.8, 8.8, 8.4, 8.4, 48.3, 25.4, 0, 0],
+  ['aone_72265', 'エーワン 72265 A4 65面 38.1×21.2mm 四辺余白付 角丸', 10.92, 10.48, 4.75, 4.75, 38.1, 21.2, 2.5, 0],
+  ['aone_72284', 'エーワン 72284 A4 84面 46×11.11mm 四辺余白付 角丸', 15.95, 15.94, 6, 5.99, 46, 11.11, 4.67, 1.59],
+];
+// プリセットで設定する入力欄の id(PRESET_ROWS の3番目以降の並びと同じ順)
+const PRESET_FIELDS = ['marginTop', 'marginBottom', 'marginLeft', 'marginRight',
+  'labelWidth', 'labelHeight', 'gapHorizontal', 'gapVertical'];
+// キー → { name, values: { 入力欄の id: 値 } }
+const PRESETS = {};
+for (const [key, name, ...nums] of PRESET_ROWS) {
+  const values = {};
+  PRESET_FIELDS.forEach((id, i) => { values[id] = nums[i]; });
+  PRESETS[key] = { name, values };
+}
+const CUSTOM_NAME = 'カスタム(手動設定)';
+
 const presetSelect = document.getElementById('preset');
-// プリセットで設定する入力欄の id
-const PRESET_FIELDS = Object.keys(PRESETS.a4_72);
+const presetFilter = document.getElementById('presetFilter');
+
+// 絞り込み用に文字をそろえる(全角英数→半角、大文字→小文字、x・* → ×)
+function normalizeForSearch(text) {
+  return text.normalize('NFKC').toLowerCase().replace(/[x*]/g, '×');
+}
+
+// 表示名が絞り込み欄の文字を含むか
+// 空白区切りで複数の語を入れた場合は、すべての語を含むものだけを対象にする
+function matchesFilter(name) {
+  const words = normalizeForSearch(presetFilter.value).split(/\s+/).filter(w => w !== '');
+  return words.every(w => normalizeForSearch(name).includes(w));
+}
+
+// いま選ばれているプリセットのキー。絞り込みで選択肢から消えても覚えておく
+let currentPreset = 'custom';
+
+// 選択肢を作り直す。絞り込み欄の文字を含むものだけを表示する
+function renderPresetOptions() {
+  const current = currentPreset;
+  const items = [['custom', CUSTOM_NAME], ...PRESET_ROWS.map(([key, name]) => [key, name])]
+    .filter(([, name]) => matchesFilter(name));
+
+  presetSelect.innerHTML = '';
+  // 選んでいたものが絞り込みで消えた場合は、件数だけの行を表示する(入力欄の値は変えない)
+  if (!items.some(([key]) => key === current)) {
+    const info = new Option(items.length === 0 ? '該当するプリセットがありません' : items.length + '件見つかりました。選択してください', '');
+    info.disabled = true;
+    info.selected = true;
+    presetSelect.add(info);
+  }
+  for (const [key, name] of items) {
+    presetSelect.add(new Option(name, key, false, key === current));
+  }
+}
 
 // プリセットを選んだら入力欄に値を入れる(カスタムの場合は今の値をそのまま使う)
 presetSelect.addEventListener('change', () => {
-  const preset = PRESETS[presetSelect.value];
+  currentPreset = presetSelect.value;
+  const preset = PRESETS[currentPreset];
   if (!preset) return;
   for (const id of PRESET_FIELDS) {
-    document.getElementById(id).value = preset[id];
+    document.getElementById(id).value = preset.values[id];
   }
   updatePreview();
 });
 
+presetFilter.addEventListener('input', renderPresetOptions);
+
 // 数値を手で変えてプリセットと値が食い違ったら、表示を「カスタム」に戻す
+// (カスタムが絞り込みで隠れている場合は、絞り込みを解除して表示する)
 PRESET_FIELDS.forEach(id => {
   document.getElementById(id).addEventListener('input', () => {
-    const preset = PRESETS[presetSelect.value];
-    if (preset && PRESET_FIELDS.some(f => readNumber(f) !== preset[f])) {
-      presetSelect.value = 'custom';
+    const preset = PRESETS[currentPreset];
+    if (preset && PRESET_FIELDS.some(f => readNumber(f) !== preset.values[f])) {
+      if (!matchesFilter(CUSTOM_NAME)) presetFilter.value = '';
+      currentPreset = 'custom';
+      renderPresetOptions();
     }
   });
 });
+renderPresetOptions();
 
 button.addEventListener('click', createPdf);
 // 入力のたびにプレビューを更新する
