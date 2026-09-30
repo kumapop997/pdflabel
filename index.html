@@ -31,6 +31,22 @@
     padding: 8px 24px;
     font-size: 1rem;
   }
+  /* 入力チェックのエラー(該当項目の横に表示する) */
+  .fieldError, #layoutInfo.error {
+    color: #c00;
+    font-size: 0.85rem;
+  }
+  #err-labelText {
+    display: block;
+  }
+  .invalid {
+    border-color: #c00;
+    outline: 1px solid #c00;
+  }
+  #layoutInfo {
+    margin: 0 0 8px;
+    font-weight: bold;
+  }
   /* プリセット名が長いので画面幅に収める */
   #preset {
     max-width: 100%;
@@ -57,24 +73,24 @@
 <!-- 用紙の余白(mm) -->
 <fieldset>
   <legend>用紙の余白(mm)</legend>
-  <label>上 <input type="number" id="marginTop" value="10" min="0" step="0.1"></label>
-  <label>下 <input type="number" id="marginBottom" value="10" min="0" step="0.1"></label>
-  <label>左 <input type="number" id="marginLeft" value="10" min="0" step="0.1"></label>
-  <label>右 <input type="number" id="marginRight" value="10" min="0" step="0.1"></label>
+  <label>上 <input type="number" id="marginTop" value="10" min="0" step="0.1"> <span class="fieldError" id="err-marginTop"></span></label>
+  <label>下 <input type="number" id="marginBottom" value="10" min="0" step="0.1"> <span class="fieldError" id="err-marginBottom"></span></label>
+  <label>左 <input type="number" id="marginLeft" value="10" min="0" step="0.1"> <span class="fieldError" id="err-marginLeft"></span></label>
+  <label>右 <input type="number" id="marginRight" value="10" min="0" step="0.1"> <span class="fieldError" id="err-marginRight"></span></label>
 </fieldset>
 
 <!-- ラベルのサイズ(mm) -->
 <fieldset>
   <legend>ラベルのサイズ(mm)</legend>
-  <label>幅 <input type="number" id="labelWidth" value="90" min="0.1" step="0.1"></label>
-  <label>高さ <input type="number" id="labelHeight" value="40" min="0.1" step="0.1"></label>
+  <label>幅 <input type="number" id="labelWidth" value="90" min="0.1" step="0.1"> <span class="fieldError" id="err-labelWidth"></span></label>
+  <label>高さ <input type="number" id="labelHeight" value="40" min="0.1" step="0.1"> <span class="fieldError" id="err-labelHeight"></span></label>
 </fieldset>
 
 <!-- ラベル間の余白(mm) -->
 <fieldset>
   <legend>ラベル間の余白(mm)</legend>
-  <label>縦 <input type="number" id="gapVertical" value="5" min="0" step="0.1"></label>
-  <label>横 <input type="number" id="gapHorizontal" value="5" min="0" step="0.1"></label>
+  <label>縦 <input type="number" id="gapVertical" value="5" min="0" step="0.1"> <span class="fieldError" id="err-gapVertical"></span></label>
+  <label>横 <input type="number" id="gapHorizontal" value="5" min="0" step="0.1"> <span class="fieldError" id="err-gapHorizontal"></span></label>
 </fieldset>
 
 <!-- 用紙プリセット(選ぶと余白・ラベルサイズ・ラベル間余白を自動設定する) -->
@@ -91,7 +107,8 @@
 <fieldset>
   <legend>テキスト</legend>
   <textarea id="labelText" rows="4" placeholder="ラベルに印字する文字を入力"></textarea>
-  <label>文字サイズ(pt) <input type="number" id="fontSize" min="0.1" step="0.1" placeholder="自動"></label>
+  <span class="fieldError" id="err-labelText"></span>
+  <label>文字サイズ(pt) <input type="number" id="fontSize" min="0.1" step="0.1" placeholder="自動"> <span class="fieldError" id="err-fontSize"></span></label>
   <br>
   <label>左右の揃え
     <select id="alignH">
@@ -112,6 +129,8 @@
 <!-- A4用紙の縮小プレビュー(入力のたびに更新) -->
 <fieldset>
   <legend>プレビュー</legend>
+  <!-- 並べ方の計算結果(○列×○行=○枚) -->
+  <p id="layoutInfo"></p>
   <canvas id="preview"></canvas>
   <p id="previewNote"></p>
 </fieldset>
@@ -144,6 +163,7 @@ const button = document.getElementById('createPdf');
 const message = document.getElementById('message');
 const canvas = document.getElementById('preview');
 const previewNote = document.getElementById('previewNote');
+const layoutInfo = document.getElementById('layoutInfo');
 
 // 取得したフォント(Base64)。初回に1度だけ取得して使い回す
 let fontBase64 = null;
@@ -211,8 +231,42 @@ function readNumber(id) {
   return value === '' ? NaN : Number(value);
 }
 
-// 入力値をまとめて読み取り、問題があればエラー文を返す
+// 入力チェックの対象(入力欄の id → 項目の種類)
+// zeroOk: 0以上 / positive: 0より大きい / text: 空欄不可 / fontSize: 空欄(自動)か0より大きい
+const FIELD_RULES = {
+  marginTop: 'zeroOk', marginBottom: 'zeroOk', marginLeft: 'zeroOk', marginRight: 'zeroOk',
+  labelWidth: 'positive', labelHeight: 'positive',
+  gapVertical: 'zeroOk', gapHorizontal: 'zeroOk',
+  labelText: 'text', fontSize: 'fontSize',
+};
+// 並べ方の計算に使う項目(ここにエラーがあると列数・行数を計算できない)
+const LAYOUT_FIELDS = ['marginTop', 'marginBottom', 'marginLeft', 'marginRight',
+  'labelWidth', 'labelHeight', 'gapVertical', 'gapHorizontal'];
+
+// 1つの入力欄をチェックし、エラーならその理由を返す(問題なければ空文字)
+function checkField(id, rule) {
+  const el = document.getElementById(id);
+  if (rule === 'text') return el.value.trim() === '' ? 'テキストを入力してください' : '';
+  // 数値欄に数値以外を入れると value は空になるため、badInput で見分ける
+  if (el.validity && el.validity.badInput) return '数値を入力してください';
+  const value = el.value.trim();
+  if (value === '') return rule === 'fontSize' ? '' : '入力してください';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '数値を入力してください';
+  if (rule === 'zeroOk' && n < 0) return '0以上の数値を入力してください';
+  if (rule !== 'zeroOk' && n <= 0) {
+    return rule === 'fontSize' ? '0より大きい数値か、空欄(自動)にしてください' : '0より大きい数値を入力してください';
+  }
+  return '';
+}
+
+// 入力値をまとめて読み取る。fieldErrors には項目ごとのエラー理由が入る
 function readSettings() {
+  const fieldErrors = {};
+  for (const [id, rule] of Object.entries(FIELD_RULES)) {
+    const reason = checkField(id, rule);
+    if (reason) fieldErrors[id] = reason;
+  }
   const s = {
     marginTop: readNumber('marginTop'),
     marginBottom: readNumber('marginBottom'),
@@ -227,24 +281,9 @@ function readSettings() {
     alignH: document.getElementById('alignH').value,
     alignV: document.getElementById('alignV').value,
   };
-  const zeroOk = [
-    ['余白(上)', s.marginTop], ['余白(下)', s.marginBottom],
-    ['余白(左)', s.marginLeft], ['余白(右)', s.marginRight],
-    ['ラベル間(縦)', s.gapV], ['ラベル間(横)', s.gapH],
-  ];
-  for (const [name, v] of zeroOk) {
-    if (!Number.isFinite(v) || v < 0) return { error: name + 'には0以上の数値を入力してください。' };
-  }
-  const positive = [['ラベルの幅', s.labelWidth], ['ラベルの高さ', s.labelHeight]];
-  for (const [name, v] of positive) {
-    if (!Number.isFinite(v) || v <= 0) return { error: name + 'には0より大きい数値を入力してください。' };
-  }
   // 文字サイズは空欄なら自動、数値なら手動指定
   s.fontSize = s.fontSizeText === '' ? null : Number(s.fontSizeText);
-  if (s.fontSize !== null && (!Number.isFinite(s.fontSize) || s.fontSize <= 0)) {
-    return { error: '文字サイズには0より大きい数値を入力するか、空欄(自動)にしてください。' };
-  }
-  return { settings: s };
+  return { s, fieldErrors };
 }
 
 // 用紙に入る列数・行数を計算する
@@ -310,23 +349,30 @@ function labelPositions(s, cols, rows) {
 
 // 入力値から、並べ方と文字サイズをまとめて計算する(プレビューとPDFで共通)
 // 問題があれば error を返す。並べ方まで計算できた場合は s, cols, rows も返す(プレビューで枠だけ描くため)
+// fieldErrors(項目ごとのエラー)と layoutError(ラベルが入らないエラー)は画面表示用に常に返す
 function calcPlan() {
-  const { settings: s, error } = readSettings();
-  if (error) return { error };
+  const { s, fieldErrors } = readSettings();
+  if (LAYOUT_FIELDS.some(id => fieldErrors[id])) {
+    return { error: '余白・ラベルのサイズ・ラベル間の入力を確認してください。', fieldErrors };
+  }
   const { cols, rows } = calcLayout(s);
   if (cols === 0 || rows === 0) {
-    return { error: 'この設定ではラベルが1枚も入りません。余白やラベルのサイズを見直してください。' };
+    const layoutError = 'この設定ではラベルが1枚も入りません。余白やラベルのサイズを見直してください。';
+    return { error: layoutError, layoutError, fieldErrors };
   }
-  if (s.text.trim() === '') return { error: 'テキストを入力してください。', s, cols, rows };
+  const base = { s, cols, rows, fieldErrors };
+  if (fieldErrors.labelText || fieldErrors.fontSize) {
+    return { ...base, error: 'テキスト・文字サイズの入力を確認してください。' };
+  }
   if (!measureDoc) {
     const reason = fontFailed ? 'フォントを読み込めなかったため、文字は表示できません。' : 'フォント読み込み中…';
-    return { error: reason, s, cols, rows };
+    return { ...base, error: reason };
   }
   // テキストエリアの改行をそのまま行として扱う
   const lines = s.text.replace(/\r\n?/g, '\n').split('\n');
 
   const maxSize = calcMaxFontSize(measureDoc, lines, s);
-  if (maxSize <= 0) return { error: 'ラベルが小さすぎて文字を配置できません。', s, cols, rows };
+  if (maxSize <= 0) return { ...base, error: 'ラベルが小さすぎて文字を配置できません。' };
   // 手動指定がはみ出す場合は収まるサイズに縮小する
   let fontSize = maxSize;
   let warning = '';
@@ -337,10 +383,29 @@ function calcPlan() {
       fontSize = s.fontSize;
     }
   }
-  return { s, cols, rows, lines, fontSize, warning };
+  return { ...base, lines, fontSize, warning };
 }
 
-// A4用紙の縮小プレビューを描く(ラベルの枠と文字)
+// 項目ごとのエラー・並べ方の計算結果・ボタンの状態を画面に反映する
+function showStatus(plan) {
+  for (const id of Object.keys(FIELD_RULES)) {
+    const reason = plan.fieldErrors[id] || '';
+    document.getElementById('err-' + id).textContent = reason;
+    document.getElementById(id).classList.toggle('invalid', reason !== '');
+  }
+  // 並べ方の計算結果(○列×○行=○枚)。計算できないときは理由を表示する
+  if (plan.s) {
+    layoutInfo.textContent = plan.cols + '列×' + plan.rows + '行=' + (plan.cols * plan.rows) + '枚';
+    layoutInfo.classList.remove('error');
+  } else {
+    layoutInfo.textContent = plan.layoutError || '入力にエラーがあるため、並べ方を計算できません。';
+    layoutInfo.classList.add('error');
+  }
+  // エラーがある間(フォント取得前・取得失敗を含む)はPDFを作成できない
+  button.disabled = !!plan.error;
+}
+
+// A4用紙の縮小プレビューを描く(ラベルの枠と文字)。あわせて入力チェックの結果も表示する
 function updatePreview() {
   const dpr = window.devicePixelRatio || 1;
   // 画面上のピクセル → canvas のピクセルの倍率(高解像度画面でもぼやけないようにする)
@@ -353,6 +418,7 @@ function updatePreview() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   const plan = calcPlan();
+  showStatus(plan);
   // 並べ方が決まらない場合は用紙だけ表示する
   if (!plan.s) {
     previewNote.textContent = plan.error;
