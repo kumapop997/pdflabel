@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDFラベルメーカー</title>
+<style>
+  body {
+    font-family: sans-serif;
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 16px;
+    color: #222;
+  }
+  fieldset {
+    border: 1px solid #ccc;
+    margin-bottom: 16px;
+  }
+  label {
+    display: inline-block;
+    margin: 4px 12px 4px 0;
+  }
+  input[type="number"] {
+    width: 5em;
+  }
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  button {
+    padding: 8px 24px;
+    font-size: 1rem;
+  }
+</style>
+</head>
+<body>
+<h1>PDFラベルメーカー</h1>
+
+<!-- 用紙の余白(mm) -->
+<fieldset>
+  <legend>用紙の余白(mm)</legend>
+  <label>上 <input type="number" id="marginTop" value="10" min="0" step="0.1"></label>
+  <label>下 <input type="number" id="marginBottom" value="10" min="0" step="0.1"></label>
+  <label>左 <input type="number" id="marginLeft" value="10" min="0" step="0.1"></label>
+  <label>右 <input type="number" id="marginRight" value="10" min="0" step="0.1"></label>
+</fieldset>
+
+<!-- ラベルのサイズ(mm) -->
+<fieldset>
+  <legend>ラベルのサイズ(mm)</legend>
+  <label>幅 <input type="number" id="labelWidth" value="90" min="0.1" step="0.1"></label>
+  <label>高さ <input type="number" id="labelHeight" value="40" min="0.1" step="0.1"></label>
+</fieldset>
+
+<!-- ラベル間の余白(mm) -->
+<fieldset>
+  <legend>ラベル間の余白(mm)</legend>
+  <label>縦 <input type="number" id="gapVertical" value="5" min="0" step="0.1"></label>
+  <label>横 <input type="number" id="gapHorizontal" value="5" min="0" step="0.1"></label>
+</fieldset>
+
+<!-- 印字するテキストと文字の配置 -->
+<fieldset>
+  <legend>テキスト</legend>
+  <textarea id="labelText" rows="4" placeholder="ラベルに印字する文字を入力"></textarea>
+  <label>文字サイズ(pt) <input type="number" id="fontSize" min="0.1" step="0.1" placeholder="自動"></label>
+  <br>
+  <label>左右の揃え
+    <select id="alignH">
+      <option value="left">左</option>
+      <option value="center" selected>中央</option>
+      <option value="right">右</option>
+    </select>
+  </label>
+  <label>上下の揃え
+    <select id="alignV">
+      <option value="top">上</option>
+      <option value="middle" selected>中央</option>
+      <option value="bottom">下</option>
+    </select>
+  </label>
+</fieldset>
+
+<!-- PDF作成(クリック時の処理は未実装) -->
+<button type="button" id="createPdf">PDFを作成</button>
+</body>
+</html>
